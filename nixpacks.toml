@@ -2,8 +2,6 @@
 nixPkgs = [
   "python311",
   "gcc",
-  "gfortran",
-  "libgcc",
   "stdenv.cc.cc.lib",
   "zlib",
   "libffi",
@@ -12,7 +10,7 @@ nixPkgs = [
 
 [phases.install]
 cmds = [
-  "pip install --upgrade pip setuptools wheel",
+  "pip install --upgrade pip",
   "pip install --no-cache-dir -r requirements.txt",
 ]
 

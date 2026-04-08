@@ -7,20 +7,15 @@ on:
       - main
   workflow_dispatch:
 
-env:
-  RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      # ── 1. Code ────────────────────────────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── 2. Railway CLI ─────────────────────────────────────────────────────
       - name: Install Railway CLI v4
         run: |
           curl -fsSL \
@@ -31,75 +26,58 @@ jobs:
           chmod +x /usr/local/bin/railway
           railway --version
 
-      # ── 3. Link to existing project (reasonable-simplicity) ───────────────
       - name: Link to Railway project
+        env:
+          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
         run: |
-          echo "=== Listing all projects ==="
+          set -e
+          echo "Listing projects..."
           railway list --json 2>&1 | tee /tmp/projects.json
-          cat /tmp/projects.json
 
-          # Pick the FIRST project available (trial = 1 project max)
-          PROJECT_ID=$(python3 - <<'PYEOF'
-          import json, sys
-          try:
-              with open('/tmp/projects.json') as f:
-                  data = json.loads(f.read().strip())
-              projects = data if isinstance(data, list) else data.get('projects', [])
-              for p in projects:
-                  pid = p.get('id') or p.get('projectId', '')
-                  name = p.get('name', '')
-                  if pid:
-                      print(f"Found: {name} => {pid}", file=sys.stderr)
-                      print(pid)
-                      break
-          except Exception as e:
-              print(f"ERROR: {e}", file=sys.stderr)
-          PYEOF
-          )
+          PROJECT_ID=$(python3 -c "
+import json, sys
+try:
+    data = json.loads(open('/tmp/projects.json').read().strip())
+    projects = data if isinstance(data, list) else data.get('projects', [])
+    for p in projects:
+        pid = p.get('id') or p.get('projectId', '')
+        if pid:
+            print(pid, end='')
+            break
+except Exception as e:
+    print('ERROR:' + str(e), file=sys.stderr)
+" 2>/tmp/parse_err)
 
-          echo "Project ID: '$PROJECT_ID'"
-
+          echo "Project ID found: $PROJECT_ID"
           if [ -n "$PROJECT_ID" ]; then
-            echo "Linking to project $PROJECT_ID"
             railway link -p "$PROJECT_ID" -e production
           else
-            echo "No project found – creating one..."
             railway init --name moteurprevision
           fi
-
-          echo "=== .railway/project.json ==="
           cat .railway/project.json
 
-      # ── 4. Deploy API service ──────────────────────────────────────────────
-      - name: Deploy Python API service
+      - name: Deploy API service
+        env:
+          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
         run: |
-          echo "=== Deploying moteurprevision API ==="
           railway up --service moteurprevision
-          echo "=== Deploy finished ==="
 
-      # ── 5. Add PostgreSQL ──────────────────────────────────────────────────
       - name: Add PostgreSQL
-        run: |
-          railway add --database postgres \
-            && echo "✅ PostgreSQL added" \
-            || echo "ℹ️  PostgreSQL already exists"
+        env:
+          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+        run: railway add --database postgres || echo "already exists"
 
-      # ── 6. Add Redis ───────────────────────────────────────────────────────
       - name: Add Redis
-        run: |
-          railway add --database redis \
-            && echo "✅ Redis added" \
-            || echo "ℹ️  Redis already exists"
+        env:
+          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+        run: railway add --database redis || echo "already exists"
 
-      # ── 7. Public domain ───────────────────────────────────────────────────
-      - name: Generate public domain
-        run: |
-          railway domain -s moteurprevision 2>/dev/null \
-            && echo "✅ Domain assigned" \
-            || echo "ℹ️  Domain already exists or skipped"
+      - name: Assign domain
+        env:
+          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+        run: railway domain -s moteurprevision 2>/dev/null || true
 
-      # ── 8. Status ──────────────────────────────────────────────────────────
       - name: Final status
-        run: |
-          echo "=== Final Railway Status ==="
-          railway status
+        env:
+          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+        run: railway status
