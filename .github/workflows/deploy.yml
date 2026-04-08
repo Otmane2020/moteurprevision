@@ -14,21 +14,66 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
+      - name: Install Railway CLI v4
+        run: |
+          curl -fsSL https://github.com/railwayapp/cli/releases/download/v4.36.1/railway-v4.36.1-x86_64-unknown-linux-gnu.tar.gz \
+            -o /tmp/railway.tar.gz
+          tar -xzf /tmp/railway.tar.gz -C /tmp
+          mv /tmp/railway /usr/local/bin/railway
+          chmod +x /usr/local/bin/railway
+          railway --version
 
-      - name: Deploy API service + add PostgreSQL + Redis
+      - name: Link or create Railway project
         env:
           RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
         run: |
-          # Deploy the main Python API service
+          # Try to find and link existing project named "moteurprevision"
+          PROJECT_ID=$(railway list --json 2>/dev/null \
+            | python3 -c "
+          import sys, json
+          try:
+              data = json.load(sys.stdin)
+              for p in data:
+                  if p.get('name') == 'moteurprevision':
+                      print(p['id'])
+                      break
+          except: pass
+          " 2>/dev/null)
+
+          if [ -n "$PROJECT_ID" ]; then
+            echo "Found project: $PROJECT_ID – linking..."
+            railway link --project "$PROJECT_ID"
+          else
+            echo "No existing project – creating moteurprevision..."
+            railway init --name moteurprevision
+          fi
+
+      - name: Deploy API service
+        env:
+          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+        run: |
           railway up --detach
+          echo "API service deployed"
 
-          # Add PostgreSQL database service (idempotent)
-          railway add --plugin postgresql --yes 2>/dev/null || echo "PostgreSQL already exists"
+      - name: Add PostgreSQL service
+        env:
+          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+        run: |
+          railway add --database postgres 2>/dev/null \
+            && echo "PostgreSQL added" \
+            || echo "PostgreSQL already exists – skipping"
 
-          # Add Redis cache service (idempotent)
-          railway add --plugin redis --yes 2>/dev/null || echo "Redis already exists"
+      - name: Add Redis service
+        env:
+          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+        run: |
+          railway add --database redis 2>/dev/null \
+            && echo "Redis added" \
+            || echo "Redis already exists – skipping"
 
-          echo "✅ All services deployed"
+      - name: Generate public domain
+        env:
+          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+        run: |
+          railway domain 2>/dev/null || true
           railway status
