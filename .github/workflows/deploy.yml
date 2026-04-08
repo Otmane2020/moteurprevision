@@ -28,11 +28,11 @@ jobs:
 
       - name: Link to Railway project
         env:
-          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+          RAILWAY_TOKEN: eeca8ab7-a80d-40e1-ba7d-b09cd328c41f
         run: |
           set -e
-          echo "Listing projects..."
           railway list --json 2>&1 | tee /tmp/projects.json
+          cat /tmp/projects.json
 
           PROJECT_ID=$(python3 -c "
 import json, sys
@@ -46,9 +46,9 @@ try:
             break
 except Exception as e:
     print('ERROR:' + str(e), file=sys.stderr)
-" 2>/tmp/parse_err)
+")
 
-          echo "Project ID found: $PROJECT_ID"
+          echo "Project ID: $PROJECT_ID"
           if [ -n "$PROJECT_ID" ]; then
             railway link -p "$PROJECT_ID" -e production
           else
@@ -58,26 +58,28 @@ except Exception as e:
 
       - name: Deploy API service
         env:
-          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+          RAILWAY_TOKEN: eeca8ab7-a80d-40e1-ba7d-b09cd328c41f
         run: |
           railway up --service moteurprevision
 
       - name: Add PostgreSQL
         env:
-          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+          RAILWAY_TOKEN: eeca8ab7-a80d-40e1-ba7d-b09cd328c41f
         run: railway add --database postgres || echo "already exists"
 
       - name: Add Redis
         env:
-          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+          RAILWAY_TOKEN: eeca8ab7-a80d-40e1-ba7d-b09cd328c41f
         run: railway add --database redis || echo "already exists"
 
       - name: Assign domain
         env:
-          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
+          RAILWAY_TOKEN: eeca8ab7-a80d-40e1-ba7d-b09cd328c41f
         run: railway domain -s moteurprevision 2>/dev/null || true
 
       - name: Final status
         env:
-          RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
-        run: railway status
+          RAILWAY_TOKEN: eeca8ab7-a80d-40e1-ba7d-b09cd328c41f
+        run: |
+          railway status
+          echo "Done"
