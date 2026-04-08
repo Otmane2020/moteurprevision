@@ -31,72 +31,75 @@ jobs:
           chmod +x /usr/local/bin/railway
           railway --version
 
-      # ── 3. Link or create project ──────────────────────────────────────────
-      - name: Link or create Railway project
+      # ── 3. Link to existing project (reasonable-simplicity) ───────────────
+      - name: Link to Railway project
         run: |
-          echo "=== Projects in account ==="
+          echo "=== Listing all projects ==="
           railway list --json 2>&1 | tee /tmp/projects.json
+          cat /tmp/projects.json
 
+          # Pick the FIRST project available (trial = 1 project max)
           PROJECT_ID=$(python3 - <<'PYEOF'
           import json, sys
           try:
               with open('/tmp/projects.json') as f:
-                  raw = f.read().strip()
-              data = json.loads(raw)
+                  data = json.loads(f.read().strip())
               projects = data if isinstance(data, list) else data.get('projects', [])
               for p in projects:
-                  if p.get('name') == 'moteurprevision':
-                      pid = p.get('id') or p.get('projectId', '')
-                      if pid:
-                          print(pid)
-                          break
+                  pid = p.get('id') or p.get('projectId', '')
+                  name = p.get('name', '')
+                  if pid:
+                      print(f"Found: {name} => {pid}", file=sys.stderr)
+                      print(pid)
+                      break
           except Exception as e:
-              print(f"parse error: {e}", file=sys.stderr)
+              print(f"ERROR: {e}", file=sys.stderr)
           PYEOF
           )
 
+          echo "Project ID: '$PROJECT_ID'"
+
           if [ -n "$PROJECT_ID" ]; then
-            echo "Linking to existing project: $PROJECT_ID"
+            echo "Linking to project $PROJECT_ID"
             railway link -p "$PROJECT_ID" -e production
           else
-            echo "Creating new project: moteurprevision"
+            echo "No project found – creating one..."
             railway init --name moteurprevision
           fi
 
-          echo "=== Project config ==="
-          cat .railway/project.json 2>/dev/null || echo "WARNING: no project.json found"
+          echo "=== .railway/project.json ==="
+          cat .railway/project.json
 
-      # ── 4. Deploy API ──────────────────────────────────────────────────────
-      - name: Deploy Python API
+      # ── 4. Deploy API service ──────────────────────────────────────────────
+      - name: Deploy Python API service
         run: |
-          echo "=== Starting deployment ==="
+          echo "=== Deploying moteurprevision API ==="
           railway up --service moteurprevision
-          echo "=== Deploy command completed ==="
+          echo "=== Deploy finished ==="
 
       # ── 5. Add PostgreSQL ──────────────────────────────────────────────────
-      - name: Add PostgreSQL database
+      - name: Add PostgreSQL
         run: |
           railway add --database postgres \
             && echo "✅ PostgreSQL added" \
-            || echo "ℹ️  PostgreSQL already exists or skipped"
+            || echo "ℹ️  PostgreSQL already exists"
 
       # ── 6. Add Redis ───────────────────────────────────────────────────────
-      - name: Add Redis cache
+      - name: Add Redis
         run: |
           railway add --database redis \
             && echo "✅ Redis added" \
-            || echo "ℹ️  Redis already exists or skipped"
+            || echo "ℹ️  Redis already exists"
 
-      # ── 7. Assign public domain ────────────────────────────────────────────
-      - name: Assign public domain
+      # ── 7. Public domain ───────────────────────────────────────────────────
+      - name: Generate public domain
         run: |
-          railway domain 2>/dev/null && echo "✅ Domain assigned" || echo "ℹ️  Domain already assigned"
+          railway domain -s moteurprevision 2>/dev/null \
+            && echo "✅ Domain assigned" \
+            || echo "ℹ️  Domain already exists or skipped"
 
-      # ── 8. Final status ────────────────────────────────────────────────────
-      - name: Show final status
+      # ── 8. Status ──────────────────────────────────────────────────────────
+      - name: Final status
         run: |
-          echo "=== Railway Status ==="
+          echo "=== Final Railway Status ==="
           railway status
-          echo ""
-          echo "=== Check logs at ==="
-          echo "https://railway.app/dashboard"
