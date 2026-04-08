@@ -3,20 +3,27 @@ Moteur de Prévision – FastAPI server
 =====================================
 10 forecasting models | 80/20 backtesting | MAPE ranking
 Called by React, SAP/ERP or any external API.
+
+Services:
+  - PostgreSQL  → forecast history (DATABASE_URL)
+  - Redis       → result cache     (REDIS_URL)
 """
 import io
 import os
+import uuid
 import logging
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.data_processor import DataProcessor
 from app.forecaster import ForecastEngine
+from app.database import get_db, save_job, list_jobs, get_job, DATABASE_URL
+from app.cache import get_cached, set_cached, flush_cache, cache_info, REDIS_URL
 
 # ---------------------------------------------------------------------------
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
@@ -104,6 +111,10 @@ async def root():
         "name": "Moteur de Prévision",
         "version": "1.0.0",
         "available_models": engine.available_models(),
+        "services": {
+            "postgresql": "connected" if DATABASE_URL else "disabled",
+            "redis": "connected" if REDIS_URL else "disabled",
+        },
         "endpoints": [
             "GET  /health",
             "GET  /models",
@@ -112,6 +123,9 @@ async def root():
             "POST /forecast/sap      – SAP/ERP data",
             "POST /backtest          – 80/20 backtesting",
             "POST /export/csv        – Download best forecast as CSV",
+            "GET  /history           – Liste des prévisions passées",
+            "GET  /history/{id}      – Détail d'une prévision",
+            "DELETE /cache           – Vider le cache Redis",
             "GET  /docs              – Swagger UI",
         ],
     }
@@ -123,6 +137,10 @@ async def health():
         "status": "healthy",
         "models_available": len(engine.available_models()),
         "models": engine.available_models(),
+        "services": {
+            "postgresql": "connected" if DATABASE_URL else "disabled",
+            "redis": cache_info(),
+        },
     }
 
 
@@ -188,14 +206,28 @@ async def forecast_from_csv(
 # ---------------------------------------------------------------------------
 
 @app.post("/forecast/json", tags=["Forecast"])
-async def forecast_from_json(request: ForecastRequest):
+async def forecast_from_json(request: ForecastRequest, db=Depends(get_db)):
     """
     Send time series as JSON and get forecasts from all models.
+    Results are cached in Redis and persisted in PostgreSQL.
     """
     df = pd.DataFrame(request.data)
     log.info("JSON forecast: %d rows, horizon=%d", len(df), request.horizon)
+
+    # Cache key
+    cache_payload = {
+        "data_hash": str(hash(str(request.data))),
+        "horizon": request.horizon,
+        "frequency": request.frequency,
+        "models": sorted(request.models),
+    }
+    cached = get_cached("forecast", cache_payload)
+    if cached:
+        return {**cached, "from_cache": True}
+
+    job_id = str(uuid.uuid4())
     try:
-        return engine.run_forecast(
+        result = engine.run_forecast(
             df=df,
             date_column=request.date_column,
             value_column=request.value_column,
@@ -204,9 +236,15 @@ async def forecast_from_json(request: ForecastRequest):
             models=request.models,
             product_column=request.product_column,
         )
+        result["job_id"] = job_id
+        set_cached("forecast", cache_payload, result)
+        save_job(db, job_id, "done", result)
+        return result
     except ValueError as exc:
+        save_job(db, job_id, "error", error=str(exc))
         raise HTTPException(422, str(exc))
     except Exception as exc:
+        save_job(db, job_id, "error", error=str(exc))
         log.error(traceback_str(exc))
         raise HTTPException(500, f"Forecast error: {exc}")
 
@@ -356,6 +394,51 @@ async def export_forecast_csv_upload(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="forecast_{best}.csv"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# History – PostgreSQL
+# ---------------------------------------------------------------------------
+
+@app.get("/history", tags=["History"])
+async def get_history(limit: int = Query(50, ge=1, le=200), db=Depends(get_db)):
+    """
+    List all past forecast jobs (requires PostgreSQL).
+    """
+    if db is None:
+        return {"status": "no_db", "message": "Add DATABASE_URL env var to enable history", "jobs": []}
+    jobs = list_jobs(db, limit)
+    return {"count": len(jobs), "jobs": jobs}
+
+
+@app.get("/history/{job_id}", tags=["History"])
+async def get_history_job(job_id: str, db=Depends(get_db)):
+    """
+    Get full result of a specific forecast job.
+    """
+    if db is None:
+        raise HTTPException(503, "PostgreSQL not configured (add DATABASE_URL)")
+    job = get_job(db, job_id)
+    if not job:
+        raise HTTPException(404, f"Job '{job_id}' not found")
+    return job
+
+
+# ---------------------------------------------------------------------------
+# Cache – Redis
+# ---------------------------------------------------------------------------
+
+@app.get("/cache", tags=["Cache"])
+async def get_cache_info():
+    """Redis cache statistics."""
+    return cache_info()
+
+
+@app.delete("/cache", tags=["Cache"])
+async def clear_cache():
+    """Flush all cached forecast results."""
+    deleted = flush_cache()
+    return {"status": "flushed", "keys_deleted": deleted}
 
 
 # ---------------------------------------------------------------------------

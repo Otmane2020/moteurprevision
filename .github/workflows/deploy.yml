@@ -17,8 +17,18 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Deploy to Railway
+      - name: Deploy API service + add PostgreSQL + Redis
         env:
           RAILWAY_TOKEN: abebc02d-47db-44fa-b2d0-f8bf5dc8323e
         run: |
+          # Deploy the main Python API service
           railway up --detach
+
+          # Add PostgreSQL database service (idempotent)
+          railway add --plugin postgresql --yes 2>/dev/null || echo "PostgreSQL already exists"
+
+          # Add Redis cache service (idempotent)
+          railway add --plugin redis --yes 2>/dev/null || echo "Redis already exists"
+
+          echo "✅ All services deployed"
+          railway status

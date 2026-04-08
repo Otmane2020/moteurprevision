@@ -10,5 +10,11 @@ python-multipart==0.0.9
 pydantic==2.7.1
 requests==2.32.3
 scipy==1.13.1
+
+# Services – PostgreSQL + Redis
+sqlalchemy==2.0.30
+psycopg2-binary==2.9.9
+redis==5.0.4
+
 # Prophet (optional – uncomment to enable, adds ~2min build time)
 # prophet==1.1.5
